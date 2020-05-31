@@ -37,7 +37,7 @@ GetFriendlyDeviceName(
     HDEVINFO hList;
     SP_DEVICE_INTERFACE_DATA DeviceInterfaceData = { 0 };
 
-    if (dev == NULL)
+    if (!dev)
     {
         std::cout << "dev was NULL" << std::endl;
         return FALSE;
@@ -105,7 +105,7 @@ GetFriendlyDeviceName(
         else
         {
             /* No more items to enumerate */
-            std::cout << "Nothing found, " << index << std::endl;
+            // std::cout << "Nothing found, " << index << std::endl;
             // DPRINT1("Nothing found, end at %d\n", index);
             break;
         }
