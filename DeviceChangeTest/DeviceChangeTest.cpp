@@ -4,51 +4,63 @@
 #include "pch.h"
 #include <iostream>
 
+#define ID_LABEL 0
+
+HWND hwndlabel = NULL;
+
+#ifndef DPRINT1
+int DPRINT1(const char* format, ...)
+{
+    va_list arg;
+    int done;
+
+    va_start(arg, format);
+    done = vfprintf(stdout, format, arg);
+    va_end(arg);
+
+    return done;
+}
+#endif
 
 static BOOL
 RegisterDevNotificationForHwnd(
     IN HWND hWnd,
     OUT HDEVNOTIFY* hDeviceNotify)
 {
-    DEV_BROADCAST_HDR NotificationFilter = { 0 };
-    NotificationFilter.dbch_size = sizeof(DEV_BROADCAST_HDR);
-    NotificationFilter.dbch_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+    DEV_BROADCAST_DEVICEINTERFACE NotificationFilter = { 0 };
+    NotificationFilter.dbcc_size = sizeof(DEV_BROADCAST_HDR);
+    NotificationFilter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
 
-    *hDeviceNotify = RegisterDeviceNotification(
-        hWnd,
+    *hDeviceNotify = RegisterDeviceNotification(hWnd,
         &NotificationFilter,
         DEVICE_NOTIFY_WINDOW_HANDLE | DEVICE_NOTIFY_ALL_INTERFACE_CLASSES);
 
-    if (*hDeviceNotify == NULL)
-    {
-        // DPRINT1("RegisterDeviceNotification failed\n");
-        return FALSE;
-    }
-
-    return TRUE;
+    return *hDeviceNotify != NULL;
 }
 
 static BOOLEAN
 GetFriendlyDeviceName(
-    IN PDEV_BROADCAST_DEVICEINTERFACE dev,
-    OUT LPCWSTR *str)
+    IN PDEV_BROADCAST_DEVICEINTERFACE pDevice,
+    OUT LPCWSTR &pszName,
+    IN BOOLEAN bCanBeUnknown)
 {
     BOOLEAN result = FALSE, DeviceInterfaceDataInitialized = FALSE;
-    HDEVINFO hList;
+    HDEVINFO hList = NULL;
     SP_DEVICE_INTERFACE_DATA DeviceInterfaceData = { 0 };
 
-    if (!dev)
+    if (!pDevice 
+        || ~pDevice->dbcc_devicetype & DBT_DEVTYP_DEVICEINTERFACE 
+        || !pDevice->dbcc_name)
     {
-        std::cout << "dev was NULL" << std::endl;
-        return FALSE;
+        DPRINT1("pDevice is not initialized properly\n");
+        goto cleanup;
     }
-
+    
     /* Create an empty device info set */
     hList = SetupDiCreateDeviceInfoList(NULL, 0);
     if (!hList)
     {
-        std::cout << "SetupDiCreateDeviceInfoList failed" << std::endl;
-        // DPRINT1("SetupDiCreateDeviceInfoList failed\n");
+        DPRINT1("SetupDiCreateDeviceInfoList failed (error %d)\n", GetLastError());
         goto cleanup;
     }
 
@@ -56,13 +68,15 @@ GetFriendlyDeviceName(
     DeviceInterfaceData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
 
     /* Open device interface */
+    DPRINT1("Open device interface\n"); // remove this line
     DeviceInterfaceDataInitialized = SetupDiOpenDeviceInterface(hList,
-        &dev->dbcc_name[0],
+        &pDevice->dbcc_name[0],
         0,
         &DeviceInterfaceData);
+    DPRINT1("dbcc_devicetype: %d\n", pDevice->dbcc_devicetype);
     if (!DeviceInterfaceDataInitialized)
     {
-        std::cout << "SetupDiOpenDeviceInterface failed - " << GetLastError() << std::endl;
+        DPRINT1("SetupDiOpenDeviceInterface failed (error %d)\n", GetLastError());
         goto cleanup;
     }
 
@@ -91,27 +105,48 @@ GetFriendlyDeviceName(
 
             if (result)
             {
-                /* We found a name, break the loop */
-                // str = (LPCWSTR*)szName; // FIXME
-                std::wcout << L" => Name: " << szName << std::endl;
+                /* We found a name - allocate buffer, break the loop */
+                DPRINT1("Device name found at %d\n", index);
+
+                pszName = (LPWSTR)HeapAlloc(GetProcessHeap(), 0, sizeof(szName));
+                if (!pszName) 
+                {
+                    DPRINT1("HeapAlloc failed\n");
+                    result = FALSE;
+                    goto cleanup;
+                }
+
+                CopyMemory((LPWSTR)pszName, szName, sizeof(szName));
                 break;
-            }
-            else
-            {
-                // std::cout << "Not found at " << index << std::endl;
-                // DPRINT1("Nothing found at %d\n", index);
             }
         }
         else
         {
             /* No more items to enumerate */
-            // std::cout << "Nothing found, " << index << std::endl;
-            // DPRINT1("Nothing found, end at %d\n", index);
+            DPRINT1("Device name not found, ending search\n");
             break;
         }
     }
 
 cleanup:
+    if (!result && bCanBeUnknown)
+    {
+        LPCWSTR pszUnknown = L"Unknown Device";
+
+        DPRINT1("Device name not found, but we can call it unknown device\n");
+
+        pszName = (LPWSTR)HeapAlloc(GetProcessHeap(), 0, sizeof(pszUnknown)); 
+        if (!pszName)
+        {
+            DPRINT1("HeapAlloc failed\n");
+        }
+        else 
+        {
+            CopyMemory((LPWSTR)pszName, pszUnknown, sizeof(pszUnknown));
+            result = TRUE;
+        }
+    }
+
     if (DeviceInterfaceDataInitialized)
         SetupDiDeleteDeviceInterfaceData(hList, &DeviceInterfaceData);
 
@@ -134,7 +169,12 @@ StatusMessageWindowProc(
     {
     case WM_CREATE:
     {
-        // DPRINT1("WM_CREATE");
+        hwndlabel = CreateWindow(L"static", L"Some name",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+            0, 0, 500, 30,
+            hwndDlg, NULL,
+            (HINSTANCE)GetWindowLong(hwndDlg, GWL_HINSTANCE), NULL);
+
         if (RegisterDevNotificationForHwnd(hwndDlg, &hDeviceNotify))
         {
             std::wcout << L"Registered" << std::endl;
@@ -149,35 +189,45 @@ StatusMessageWindowProc(
     case WM_DEVICECHANGE:
     {
         PDEV_BROADCAST_DEVICEINTERFACE b = (PDEV_BROADCAST_DEVICEINTERFACE)lParam;
-        LPCWSTR friendlyName;
+        LPCWSTR friendlyName = NULL;
 
         switch (wParam)
         {
 
         case DBT_DEVICEARRIVAL:
         {
-            if (GetFriendlyDeviceName(b, &friendlyName))
+            if (GetFriendlyDeviceName(b, friendlyName, FALSE))
             {
-                std::wcout << L"[OK] Friendly name for DBT_DEVICEARRIVAL - FOUND!!!" << std::endl;
+                DPRINT1("[OK] Friendly name for DBT_DEVICEARRIVAL - FOUND!!!\n");
+
+                // std::wcout << L"DBT_DEVICEARRIVAL: " << friendlyName << std::endl;
+                SetWindowText(hwndlabel, friendlyName);
+                // HeapFree(GetProcessHeap(), 0, &friendlyName);
             }
             else 
             {
-                std::wcout << L"[FAIL] Friendly name for DBT_DEVICEARRIVAL - NOT FOUDN!!!" << std::endl;
+                DPRINT1("[FAIL] Friendly name for DBT_DEVICEARRIVAL - NOT FOUDN!!!\n");
             }
+
         }
         case DBT_DEVNODES_CHANGED:
         {
             // b is null 
-            if (GetFriendlyDeviceName(b, &friendlyName))
+            if (GetFriendlyDeviceName(b, friendlyName, FALSE))
             {
-                std::wcout << L"[OK] Friendly name for DBT_DEVNODES_CHANGED - FOUND!!!" << std::endl;
+                DPRINT1("[OK] Friendly name for DBT_DEVNODES_CHANGED - FOUND!!!\n");
+
+                // std::wcout << L"DBT_DEVNODES_CHANGED: " << friendlyName << std::endl;
+                SetWindowText(hwndlabel, friendlyName);
+                // HeapFree(GetProcessHeap(), 0, &friendlyName);
             }
             else
             {
-                std::wcout << L"[FAIL] Friendly name for DBT_DEVNODES_CHANGED - NOT FOUDN!!!" << std::endl;
+                DPRINT1("[FAIL] Friendly name for DBT_DEVNODES_CHANGED - NOT FOUDN!!!\n");
             }
         }
         }
+
         return TRUE;
     }
 
@@ -235,6 +285,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     wnd.lpfnWndProc = (WNDPROC)StatusMessageWindowProc;
     wnd.lpszClassName = wndClassName;
     wnd.hInstance = hInstance;
+    wnd.hbrBackground = (HBRUSH)COLOR_WINDOWFRAME;
+    wnd.style = CS_HREDRAW | CS_VREDRAW;
 
     auto atom = RegisterClass(&wnd);
     if (!atom) 
@@ -246,19 +298,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     }
 
     hwnd = CreateWindowEx(
-        0,                              // Optional window styles.
-        wndClassName,                     // Window class
-        L"Dev tests",    // Window text
-        WS_OVERLAPPEDWINDOW,            // Window style
-
-        // Size and position
+        0,              
+        wndClassName,   
+        L"Dev tests",   
+        WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-
-        NULL,       // Parent window    
-        NULL,       // Menu
-        hInstance,  // Instance handle
-        NULL        // Additional application data
-        );
+        NULL,     
+        NULL,     
+        hInstance,
+        NULL);
 
     if (!hwnd)
     {
@@ -267,6 +315,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         // DPRINT1("CreateWindowEx failed - %lu\n", GetLastError());
         goto end;
     }
+
+    ShowWindow(hwnd, SW_SHOW);
 
     MSG msg;
     while (GetMessage(&msg, hwnd, 0, 0) != 0)

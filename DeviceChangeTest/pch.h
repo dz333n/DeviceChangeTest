@@ -9,6 +9,7 @@
 
 #include <windows.h>
 #include <SetupAPI.h>
+#include <strsafe.h>
 #include <dbt.h>
 
 #endif //PCH_H
