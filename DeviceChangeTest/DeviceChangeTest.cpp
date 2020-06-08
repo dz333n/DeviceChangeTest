@@ -41,8 +41,7 @@ RegisterDevNotificationForHwnd(
 static BOOLEAN
 GetFriendlyDeviceName(
     IN PDEV_BROADCAST_DEVICEINTERFACE pDevice,
-    OUT LPCWSTR &pszName,
-    IN BOOLEAN bCanBeUnknown)
+    OUT LPCWSTR* pszName)
 {
     BOOLEAN result = FALSE, DeviceInterfaceDataInitialized = FALSE;
     HDEVINFO hList = NULL;
@@ -108,15 +107,15 @@ GetFriendlyDeviceName(
                 /* We found a name - allocate buffer, break the loop */
                 DPRINT1("Device name found at %d\n", index);
 
-                pszName = (LPWSTR)HeapAlloc(GetProcessHeap(), 0, sizeof(szName));
-                if (!pszName) 
+                *pszName = (LPWSTR)HeapAlloc(GetProcessHeap(), 0, sizeof(szName));
+                if (!*pszName) 
                 {
                     DPRINT1("HeapAlloc failed\n");
                     result = FALSE;
                     goto cleanup;
                 }
 
-                CopyMemory((LPWSTR)pszName, szName, sizeof(szName));
+                CopyMemory((LPWSTR)*pszName, szName, sizeof(TCHAR) + 1024);
                 break;
             }
         }
@@ -129,24 +128,6 @@ GetFriendlyDeviceName(
     }
 
 cleanup:
-    if (!result && bCanBeUnknown)
-    {
-        LPCWSTR pszUnknown = L"Unknown Device";
-
-        DPRINT1("Device name not found, but we can call it unknown device\n");
-
-        pszName = (LPWSTR)HeapAlloc(GetProcessHeap(), 0, sizeof(pszUnknown)); 
-        if (!pszName)
-        {
-            DPRINT1("HeapAlloc failed\n");
-        }
-        else 
-        {
-            CopyMemory((LPWSTR)pszName, pszUnknown, sizeof(pszUnknown));
-            result = TRUE;
-        }
-    }
-
     if (DeviceInterfaceDataInitialized)
         SetupDiDeleteDeviceInterfaceData(hList, &DeviceInterfaceData);
 
@@ -190,41 +171,28 @@ StatusMessageWindowProc(
     {
         PDEV_BROADCAST_DEVICEINTERFACE b = (PDEV_BROADCAST_DEVICEINTERFACE)lParam;
         LPCWSTR friendlyName = NULL;
+        WCHAR szLog[1024] = { 0 };
 
         switch (wParam)
         {
-
+        case DBT_DEVNODES_CHANGED:
         case DBT_DEVICEARRIVAL:
         {
-            if (GetFriendlyDeviceName(b, friendlyName, FALSE))
+            if (GetFriendlyDeviceName(b, &friendlyName))
             {
-                DPRINT1("[OK] Friendly name for DBT_DEVICEARRIVAL - FOUND!!!\n");
+                DPRINT1("[OK] Friendly name for found\n");
 
-                // std::wcout << L"DBT_DEVICEARRIVAL: " << friendlyName << std::endl;
-                SetWindowText(hwndlabel, friendlyName);
+                StringCbPrintf(szLog, sizeof(szLog), L"Installing devices... %s", friendlyName);
+                SetWindowText(hwndlabel, szLog);
                 // HeapFree(GetProcessHeap(), 0, &friendlyName);
             }
-            else 
+           /* else 
             {
-                DPRINT1("[FAIL] Friendly name for DBT_DEVICEARRIVAL - NOT FOUDN!!!\n");
-            }
+                DPRINT1("[FAIL] Friendly name not found\n");
+                StringCbPrintf(szLog, sizeof(szLog), L"Installing devices...");
+                SetWindowText(hwndlabel, szLog);
+            }*/
 
-        }
-        case DBT_DEVNODES_CHANGED:
-        {
-            // b is null 
-            if (GetFriendlyDeviceName(b, friendlyName, FALSE))
-            {
-                DPRINT1("[OK] Friendly name for DBT_DEVNODES_CHANGED - FOUND!!!\n");
-
-                // std::wcout << L"DBT_DEVNODES_CHANGED: " << friendlyName << std::endl;
-                SetWindowText(hwndlabel, friendlyName);
-                // HeapFree(GetProcessHeap(), 0, &friendlyName);
-            }
-            else
-            {
-                DPRINT1("[FAIL] Friendly name for DBT_DEVNODES_CHANGED - NOT FOUDN!!!\n");
-            }
         }
         }
 
@@ -291,7 +259,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     auto atom = RegisterClass(&wnd);
     if (!atom) 
     {
-        wsprintf(szMsg, L"RegisterClassEx failed  - %d", GetLastError());
+        StringCbPrintf(szMsg, sizeof(szMsg), L"RegisterClassEx failed  - %d", GetLastError());
         MessageBox(0, szMsg, L"dev", 0);
         // DPRINT1("RegisterClassEx failed - %d\n", GetLastError());
         goto end;
@@ -310,7 +278,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     if (!hwnd)
     {
-        wsprintf(szMsg, L"CreateWindowEx failed  - %d", GetLastError());
+        StringCbPrintf(szMsg, sizeof(szMsg), L"CreateWindowEx failed  - %d", GetLastError());
         MessageBox(0, szMsg, L"dev", 0);
         // DPRINT1("CreateWindowEx failed - %lu\n", GetLastError());
         goto end;
