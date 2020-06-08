@@ -28,7 +28,7 @@ RegisterDevNotificationForHwnd(
     OUT HDEVNOTIFY* hDeviceNotify)
 {
     DEV_BROADCAST_DEVICEINTERFACE NotificationFilter = { 0 };
-    NotificationFilter.dbcc_size = sizeof(DEV_BROADCAST_HDR);
+    NotificationFilter.dbcc_size = sizeof(DEV_BROADCAST_DEVICEINTERFACE);
     NotificationFilter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
 
     *hDeviceNotify = RegisterDeviceNotification(hWnd,
@@ -163,6 +163,7 @@ StatusMessageWindowProc(
         else 
         {
             std::wcout << L"NOT Registered" << std::endl;
+            std::wcout << L"ERROR: " << GetLastError() << std::endl;
         }
         return TRUE;
     }
