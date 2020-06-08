@@ -184,7 +184,7 @@ StatusMessageWindowProc(
 
                 StringCbPrintf(szLog, sizeof(szLog), L"Installing devices... %s", friendlyName);
                 SetWindowText(hwndlabel, szLog);
-                // HeapFree(GetProcessHeap(), 0, &friendlyName);
+                HeapFree(GetProcessHeap(), 0, &friendlyName);
             }
            /* else 
             {
